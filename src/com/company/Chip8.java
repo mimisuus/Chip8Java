@@ -8,6 +8,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.concurrent.ThreadLocalRandom;
+import javax.sound.midi.*;
 
 //
 // Used Cowgod's technical reference sheet in the making of this emulator
@@ -15,30 +16,34 @@ import java.util.concurrent.ThreadLocalRandom;
 //
 
 public class Chip8 extends JFrame implements ActionListener {
-    private int[] memory = new int[4096];
+    public static int[] memory = new int[4096];
     private byte[] byteArray = new byte[3584];
-    private short delayTimer;
-    private int programCounter;
+    private static short delayTimer, soundTimer;
+    private static int programCounter;
     private int l = 0, stackPointer = 0;
     private short[] stack = new short[16];
     private int[] dataRegister = new int[16];
-    private int windowWidth = 64;
-    private int windowHeight = 32;
-    private short keyHeld;
+    private final int windowWidth = 64;
+    private final int windowHeight = 32;
+    public static short keyHeld;
     private boolean flipped;
     private javax.swing.Timer timer;
     private int decrement = 0;
-    private Image doubleBuffer;
-    private Graphics doubleBufferG;
+    private Color light = new Color(222, 228, 231, 255);
+    private Color dark = new Color(55, 71, 79, 255);
+    //Scale for each pixel
+    private final int scale = 10;
     //2D Array representing each pixel on the screen
     private byte[][] screenGrid = new byte[windowHeight][windowWidth];
+    //Sound channels
+    private MidiChannel[] channels;
     private File rom;
 
 
     public void paint(Graphics g){
         //double buffer to reduce flicker
-        doubleBuffer = createImage(650, 350);
-        doubleBufferG = doubleBuffer.getGraphics();
+        Image doubleBuffer = createImage(650, 350);
+        Graphics doubleBufferG = doubleBuffer.getGraphics();
         paintComponent(doubleBufferG);
         g.drawImage(doubleBuffer, 0, 0,this);
     }
@@ -48,18 +53,18 @@ public class Chip8 extends JFrame implements ActionListener {
         for(int h = 0; h < windowHeight; h++){
             for(int w = 0; w < windowWidth; w++){
                 if(screenGrid[h][w] == 1){
-                    g.setColor(Color.WHITE);
-                    g.fillRect(w*10 + 10,h*10 + 30,10,10);
+                    g.setColor(light);
+                    g.fillRect(w * scale + 10,h * scale + 30,10,10);
                 } else {
-                    g.setColor(Color.BLACK);
-                    g.fillRect(w*10 + 10,h *10 + 30,10,10);
+                    g.setColor(dark);
+                    g.fillRect(w * scale + 10,h * scale + 30,10,10);
                 }
             }
         }
     }
 
     public Chip8() throws IOException {
-        setSize(windowWidth * 10 + 20, windowHeight * 10 + 35);
+        setSize(windowWidth * scale + 20, windowHeight * scale + 35);
         setTitle("Chip 8");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setVisible(true);
@@ -77,15 +82,21 @@ public class Chip8 extends JFrame implements ActionListener {
             FileInputStream romStream = new FileInputStream(rom);
             romStream.read(byteArray);
             romStream.close();
+            // Implement sound, which is just a single
+            // beep when the soundTimer isn't 0
+            Synthesizer synthesizer = MidiSystem.getSynthesizer();
+            synthesizer.open();
+            Instrument[] instruments = synthesizer.getDefaultSoundbank().getInstruments();
+            channels = synthesizer.getChannels();
+            channels[0].programChange(instruments[4].getPatch().getProgram());
         } catch (Exception e){
             System.out.print(e);
         }
-        timer = new javax.swing.Timer(2, this);
+        timer = new javax.swing.Timer(1, this);
         timer.start();
-        loadFont();
-        addKeyListener(new KeyInput(this));
-        this.programCounter = 0x200;
-        loadFont();
+        Font.loadFont();
+        addKeyListener(new KeyInput());
+        programCounter = 0x200;
         fromByteToIntArray();
     }
 
@@ -94,7 +105,6 @@ public class Chip8 extends JFrame implements ActionListener {
             memory[programCounter + i ] = byteArray[i] & 0xFF;
         }
     }
-
 
     public void Opcode(){
         // Each opcode is 2 bytes long and represented with a hexadecimal
@@ -181,24 +191,22 @@ public class Chip8 extends JFrame implements ActionListener {
                     //8XY4
                     case(0x0004):
                         if((dataRegister[(opcode & 0x0F00) >> 8] + dataRegister[(opcode & 0x00F0) >> 4]) > 0xFF){
-                            dataRegister[(opcode & 0x0F00) >> 8] += dataRegister[(opcode & 0x00F0) >> 4];
-                            dataRegister[(opcode & 0x0F00) >> 8] %= 0xFF;
                             dataRegister[0xF] = 1;
                         } else {
-                            dataRegister[(opcode & 0x0F00) >> 8] += dataRegister[(opcode & 0x00F0) >> 4];
                             dataRegister[0xF] = 0;
                         }
+                        dataRegister[(opcode & 0x0F00) >> 8] += dataRegister[(opcode & 0x00F0) >> 4];
+                        dataRegister[(opcode & 0x0F00) >> 8] &= 0xFF;
                         break;
                     //8XY5
                     case(0x0005):
                         if(dataRegister[(opcode & 0x0F00) >> 8] < dataRegister[(opcode & 0x00F0) >> 4]){
-                            dataRegister[(opcode & 0x0F00) >> 8] -= dataRegister[(opcode & 0x00F0) >> 4];
-                            dataRegister[(opcode & 0x0F00) >> 8] &= 0xFF;
                             dataRegister[0xF] = 0;
                         } else {
-                            dataRegister[(opcode & 0x0F00) >> 8] -= dataRegister[(opcode & 0x00F0) >> 4];
                             dataRegister[0xF] = 1;
                         }
+                        dataRegister[(opcode & 0x0F00) >> 8] -= dataRegister[(opcode & 0x00F0) >> 4];
+                        dataRegister[(opcode & 0x0F00) >> 8] &= 0xFF;
                         break;
                     //8XY6
                     case(0x0006):
@@ -208,13 +216,12 @@ public class Chip8 extends JFrame implements ActionListener {
                     //8XY7
                     case(0x0007):
                         if(dataRegister[(opcode & 0x00F0) >> 4] < dataRegister[(opcode & 0x0F00) >> 8]){
-                            dataRegister[(opcode & 0x0F00) >> 8] = dataRegister[(opcode & 0x00F0) >> 4] - dataRegister[(opcode & 0x0F00) >> 8];
-                            dataRegister[(opcode & 0x0F00) >> 8] &= 0xFF;
                             dataRegister[0xF] = 0;
                         } else {
-                            dataRegister[(opcode & 0x0F00) >> 8] = dataRegister[(opcode & 0x00F0) >> 4] - dataRegister[(opcode & 0x0F00) >> 8];
                             dataRegister[0xF] = 1;
                         }
+                        dataRegister[(opcode & 0x0F00) >> 8] = dataRegister[(opcode & 0x00F0) >> 4] - dataRegister[(opcode & 0x0F00) >> 8];
+                        dataRegister[(opcode & 0x0F00) >> 8] &= 0xFF;
                         break;
                     case(0x000E):
                         dataRegister[0xF] = dataRegister[(opcode & 0x0F00) >> 8] >> 7;
@@ -239,8 +246,7 @@ public class Chip8 extends JFrame implements ActionListener {
                 break;
                 //CXNN
             case(0xC000):
-                int random = ThreadLocalRandom.current().nextInt(0,255+1);
-                dataRegister[(opcode & 0x0F00) >> 8] = random & (opcode & 0x00FF);
+                dataRegister[(opcode & 0x0F00) >> 8] = ThreadLocalRandom.current().nextInt(1,255) & (opcode & 0x00FF);
                 break;
                 //DXYN
             case(0xD000):
@@ -291,7 +297,7 @@ public class Chip8 extends JFrame implements ActionListener {
                         if(keyHeld == 0xFF){
                             programCounter-=2;
                         }
-                        dataRegister[(opcode & 0x0F00) >> 8] = this.keyHeld;
+                        dataRegister[(opcode & 0x0F00) >> 8] = keyHeld;
                         break;
                         //FX15
                     case(0x0015):
@@ -299,6 +305,7 @@ public class Chip8 extends JFrame implements ActionListener {
                         break;
                         //FX18
                     case(0x0018):
+                        soundTimer = (short)dataRegister[(opcode & 0x0F00) >> 8];
                         break;
                         //FX1E
                     case(0x001E):
@@ -334,115 +341,19 @@ public class Chip8 extends JFrame implements ActionListener {
         }
     }
 
-    short[] font = new short[]{
-            // Each line represents a sprite
-            // of a number between 0-F
-            0xF0,0x90,0x90,0x90,0xF0,
-            0x20,0x60,0x20,0x20,0x70,
-            0xF0,0x10,0xF0,0x80,0xF0,
-            0xF0,0x10,0xF0,0x10,0x10,
-            0x90,0x90,0xF0,0x10,0x10,
-            0xF0,0x80,0xF0,0x10,0xF0,
-            0xF0,0x80,0xF0,0x90,0xF0,
-            0xF0,0x10,0x20,0x40,0x40,
-            0xF0,0x90,0xF0,0x90,0xF0,
-            0xF0,0x90,0xF0,0x10,0xF0,
-            0xF0,0x90,0xF0,0x90,0x90,
-            0xE0,0x90,0xE0,0x90,0xE0,
-            0xF0,0x80,0x80,0x80,0xF0,
-            0xE0,0x90,0x90,0x90,0xE0,
-            0xF0,0x80,0xF0,0x80,0xF0,
-            0xF0,0x80,0xF0,0x80,0x80
-    };
 
-
-    // The program doesn't write to the first 0x200
-    // addresses of memory, so it is often used
-    // for storing the chip-8 font
-    public void loadFont(){
-        for (int i = 0; i < font.length; i++){
-            memory[i] = font[i];
+    public void actionPerformed(ActionEvent e) {
+        if (soundTimer > 0) {
+            channels[0].noteOn(70, 20);
+            --soundTimer;
         }
-    }
-
-    public void actionPerformed(ActionEvent e){
             if (delayTimer > 0 && decrement == 0) {
                 --delayTimer;
-                repaint();
             }
             decrement++;
-            decrement %= 8;
+            decrement %= 16;
+            repaint();
             Opcode();
             programCounter += 2;
-    }
-    /*The chip8 keypad is mapped in the following way.
-      We must remap the keyboard according to their
-      relative position on the chip8 keypad
-         CHIP-8             PC KEYBOARD
-        |1|2|3|C|            |1|2|3|4|
-        ---------            ---------
-        |4|5|6|D|            |Q|W|E|R|
-        ---------            ---------
-        |7|8|9|E|            |A|S|D|F|
-        ---------            ---------
-        |A|0|B|F|            |Z|X|C|V|
-    */
-
-    public void keyPressed(KeyEvent e){
-        switch(e.getKeyCode()){
-            case(KeyEvent.VK_1):
-                this.keyHeld = 0x1;
-                break;
-            case(KeyEvent.VK_2):
-                this.keyHeld = 0x2;
-                break;
-            case(KeyEvent.VK_3):
-                this.keyHeld = 0x3;
-                break;
-            case(KeyEvent.VK_4):
-                this.keyHeld = 0xC;
-                break;
-            case(KeyEvent.VK_Q):
-                this.keyHeld = 0x4;
-                break;
-            case(KeyEvent.VK_W):
-                this.keyHeld = 0x5;
-                break;
-            case(KeyEvent.VK_E):
-                this.keyHeld = 0x6;
-                break;
-            case(KeyEvent.VK_R):
-                this.keyHeld = 0xD;
-                break;
-            case(KeyEvent.VK_A):
-                this.keyHeld = 0x7;
-                break;
-            case(KeyEvent.VK_S):
-                this.keyHeld = 0x8;
-                break;
-            case(KeyEvent.VK_D):
-                this.keyHeld = 0x9;
-                break;
-            case(KeyEvent.VK_F):
-                this.keyHeld = 0xE;
-                break;
-            case(KeyEvent.VK_Z):
-                this.keyHeld = 0xA;
-                break;
-            case(KeyEvent.VK_X):
-                this.keyHeld = 0x0;
-                break;
-            case(KeyEvent.VK_C):
-                this.keyHeld = 0xB;
-                break;
-            case(KeyEvent.VK_V):
-                this.keyHeld = 0xF;
-                break;
-
-        }
-    }
-
-    public void keyReleased(KeyEvent e){
-        this.keyHeld = 0xFF;
     }
 }
