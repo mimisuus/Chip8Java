@@ -3,7 +3,6 @@ import javax.swing.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -17,18 +16,23 @@ import javax.sound.midi.*;
 
 public class Chip8 extends JFrame implements ActionListener {
     public static int[] memory = new int[4096];
+    //used for loading roms to system memory above
     private byte[] byteArray = new byte[3584];
+    //used to track progress of each timer
     private static short delayTimer, soundTimer;
     private static int programCounter;
-    private int l = 0, stackPointer = 0;
+    private int I = 0, stackPointer = 0;
     private short[] stack = new short[16];
     private int[] dataRegister = new int[16];
     private final int windowWidth = 64;
     private final int windowHeight = 32;
     public static short keyHeld;
+    //flag to see if draw function flipped any pixels last time
     private boolean flipped;
+    //Timer used for delay and sound timer
     private javax.swing.Timer timer;
     private int decrement = 0;
+    //Color for each ON and OFF pixel
     private Color light = new Color(222, 228, 231, 255);
     private Color dark = new Color(55, 71, 79, 255);
     //Scale for each pixel
@@ -49,16 +53,18 @@ public class Chip8 extends JFrame implements ActionListener {
     }
 
     public void paintComponent(Graphics g){
-        //Draw each pixel as either white ON "1" or black OFF "0"
+        //Set the screen black, then paint every pixel that is 1
+        g.setColor(dark);
+        g.fillRect(0,0, windowWidth * scale + 10, windowHeight * scale + 30);
+        g.setColor(light);
         for(int h = 0; h < windowHeight; h++){
             for(int w = 0; w < windowWidth; w++){
                 if(screenGrid[h][w] == 1){
-                    g.setColor(light);
                     g.fillRect(w * scale + 10,h * scale + 30,10,10);
-                } else {
-                    g.setColor(dark);
-                    g.fillRect(w * scale + 10,h * scale + 30,10,10);
-                }
+                } //else {
+                    //g.setColor(dark);
+                    //g.fillRect(w * scale + 10,h * scale + 30,10,10);
+                //}
             }
         }
     }
@@ -237,7 +243,7 @@ public class Chip8 extends JFrame implements ActionListener {
                 break;
                 //ANNN
             case(0xA000):
-                l = opcode & 0x0FFF;
+                I = opcode & 0x0FFF;
                 break;
                 //BNNN
             case(0xB000):
@@ -256,10 +262,12 @@ public class Chip8 extends JFrame implements ActionListener {
                 int height = opcode & 0x000F;
                 for(int h = 0; h < height; h++){
                     for(int w = 0; w < 8; w++){
-                        if((screenGrid[(startY + h) % windowHeight][(startX + w) % windowWidth]) * ((memory[l+h] >> (7-w)) & 0b1) == 1){
+                        // Goes through each bit of the specified memory address & each pixel at the x,y coordinate of the opcode is xor'd with them.
+                        // If they are on they are set back to off then the flipped flag is set to true
+                        if((screenGrid[(startY + h) % windowHeight][(startX + w) % windowWidth]) * ((memory[I +h] >> (7-w)) & 0b1) == 1){
                             flipped = true;
                         }
-                        screenGrid[(startY + h) % windowHeight][(startX + w) % windowWidth] ^= ((memory[l+h] >> (7-w)) & 0b1);
+                        screenGrid[(startY + h) % windowHeight][(startX + w) % windowWidth] ^= ((memory[I +h] >> (7-w)) & 0b1);
                     }
                 }
                 if(flipped){
@@ -309,32 +317,32 @@ public class Chip8 extends JFrame implements ActionListener {
                         break;
                         //FX1E
                     case(0x001E):
-                        l += dataRegister[(opcode & 0x0F00) >> 8];
-                        l &= 0xFFFF;
+                        I += dataRegister[(opcode & 0x0F00) >> 8];
+                        I &= 0xFFFF;
                         break;
                         //FX29
                     case(0x0029):
-                        l = dataRegister[(opcode & 0x0F00) >> 8] * 5;
+                        I = dataRegister[(opcode & 0x0F00) >> 8] * 5;
                         break;
                         //FX33
                     case(0x0033):
-                        memory[l] = (dataRegister[(opcode & 0x0F00) >> 8] / 100);
-                        memory[l+1] = ((dataRegister[(opcode & 0x0F00) >> 8] / 10) % 10);
-                        memory[l+2] = (dataRegister[(opcode & 0x0F00) >> 8] % 10);
+                        memory[I] = (dataRegister[(opcode & 0x0F00) >> 8] / 100);
+                        memory[I +1] = ((dataRegister[(opcode & 0x0F00) >> 8] / 10) % 10);
+                        memory[I +2] = (dataRegister[(opcode & 0x0F00) >> 8] % 10);
                         break;
                         //FX55
                     case(0x0055):
                         for(int i=0; i <= ((opcode & 0x0F00) >> 8); i++){
-                            memory[l+i] = dataRegister[i];
+                            memory[I +i] = dataRegister[i];
                         }
-                        l += 1 + ((opcode & 0x0F00) >> 8);
+                        I += 1 + ((opcode & 0x0F00) >> 8);
                         break;
                         //FX65
                     case(0x0065):
                         for(int i=0; i <= ((opcode & 0x0F00) >> 8); i++){
-                            dataRegister[i] = memory[l+i];
+                            dataRegister[i] = memory[I +i];
                         }
-                        l += 1 + ((opcode & 0x0F00) >> 8);
+                        I += 1 + ((opcode & 0x0F00) >> 8);
                         break;
                 }
                 break;

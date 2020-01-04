@@ -67,7 +67,6 @@ public class KeyInput extends KeyAdapter {
             case(KeyEvent.VK_V):
                 Chip8.keyHeld = 0xF;
                 break;
-
         }
     }
 
